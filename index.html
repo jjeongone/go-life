@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>사활 노트</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 돌 그라데이션 (모든 바둑판이 공유) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <radialGradient id="gB" cx="35%" cy="30%" r="70%">
+        <stop offset="0%" stop-color="#5a5a5a"/>
+        <stop offset="55%" stop-color="#1c1c1c"/>
+        <stop offset="100%" stop-color="#000"/>
+      </radialGradient>
+      <radialGradient id="gW" cx="35%" cy="30%" r="75%">
+        <stop offset="0%" stop-color="#ffffff"/>
+        <stop offset="70%" stop-color="#eeebe4"/>
+        <stop offset="100%" stop-color="#c9c4ba"/>
+      </radialGradient>
+    </defs>
+  </svg>
+
+  <header class="top">
+    <a href="#/" class="logo"><span class="dot b"></span><span class="dot w"></span>사활 노트</a>
+  </header>
+  <main id="app"></main>
+  <div id="toast" role="status"></div>
+  <input type="file" id="importFile" accept="application/json,.json" hidden>
+
+  <script src="go.js"></script>
+  <script src="board.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
