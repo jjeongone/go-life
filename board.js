@@ -76,7 +76,9 @@
       const x = i % n, y = (i / n) | 0, c = b[i];
       if (!c || !inVp(x, y)) continue;
       const fs = num >= 100 ? CS * 0.36 : CS * 0.46;
-      const cls = 'lbl lbl' + c + (i === o.lastIdx ? ' last' : '');
+      // varFrom 이후 번호는 변화도(가상의 수)라서 파란색
+      const isVar = o.varFrom != null && num > o.varFrom;
+      const cls = 'lbl lbl' + c + (isVar ? ' var' : i === o.lastIdx ? ' last' : '');
       s += `<text x="${X(x)}" y="${Y(y) + fs * 0.36}" font-size="${fs}" class="${cls}">${num}</text>`;
     }
     if (o.lastIdx >= 0 && !labels.has(o.lastIdx) && b[o.lastIdx]) {

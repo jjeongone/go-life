@@ -134,6 +134,7 @@
     window.scrollTo(0, 0);
     const parts = (location.hash.slice(1) || '/').split('/').filter(Boolean);
     if (parts[0] === 'new') return viewEdit(null);
+    if (parts[0] === 'grade') return viewGrade();
     if (parts[0] === 'p') {
       const p = problems.find((x) => x.id === parts[1]);
       if (!p) { location.replace('#/'); return; }
@@ -165,6 +166,7 @@
     $app.innerHTML = `
       <div class="toolbar">
         <a class="btn primary" href="#/new">+ 새 문제 입력</a>
+        ${ungradedQueue().length ? `<a class="btn grade-btn" href="#/grade">채점하기 <b>${ungradedQueue().length}</b></a>` : ''}
         <input class="search" type="search" placeholder="제목·메모 검색" id="q">
         <span class="spacer"></span>
         <button class="btn" id="exp">내보내기</button>
@@ -304,9 +306,6 @@
   // ---------- 풀기 ----------
   function viewSolve(p) {
     const moves = [];
-    let grading = false;
-    let grade = null;
-    let note = '';
     const first = p.toPlay || 'B';
     const nextColor = () => (moves.length % 2 === 0 ? first : other(first));
 
@@ -347,62 +346,152 @@
     }
     const stepBack = () => { if (moves.length) { moves.pop(); draw(); } };
 
+    // 풀이 완료: 채점 없이(미채점) 저장하고 목록으로. 채점은 '채점하기'에서 따로.
+    function finish() {
+      const a = { id: uid(), moves: moves.slice(), grade: null, note: '', createdAt: Date.now() };
+      (p.attempts = p.attempts || []).push(a);
+      p.updatedAt = Date.now();
+      save();
+      toast(`풀이를 저장했어요 · 채점 대기 ${ungradedQueue().length}개`);
+      location.hash = '#/';
+    }
+
     function draw() {
       const r = replay(p.size, p.stones, moves);
       const nc = nextColor();
       $('#board').replaceChildren(renderBoard({
         size: p.size, board: r.board, labels: r.labels, lastIdx: r.lastIdx, viewport: viewport(),
-        onClick: grading ? null : play, ghostColor: grading ? null : nextColor,
+        onClick: play, ghostColor: nextColor,
       }));
-
-      $('#status').innerHTML = grading
-        ? `<span class="turn-pill">채점 중 <span class="count">${moves.length}수 풀이</span></span>`
-        : `<button class="icon-btn" id="stepBack" title="한 수 뒤로 (←)" aria-label="한 수 뒤로" ${moves.length ? '' : 'disabled'}>←</button>
-           <span class="turn-pill">${stoneIcon(nc)} ${COLOR[nc]} 차례 <span class="count">${moves.length + 1}수째</span></span>`;
-
-      $('#controls').innerHTML = grading
-        ? `<button class="btn" id="back">← 계속 두기</button>`
-        : `<span class="spacer"></span>
-           <button class="btn primary" id="done" ${moves.length ? '' : 'disabled'}>풀이 완료 · 채점 →</button>`;
-
-      const kifu = `
+      $('#status').innerHTML = `
+        <button class="icon-btn" id="stepBack" title="한 수 뒤로 (←)" aria-label="한 수 뒤로" ${moves.length ? '' : 'disabled'}>←</button>
+        <span class="turn-pill">${stoneIcon(nc)} ${COLOR[nc]} 차례 <span class="count">${moves.length + 1}수째</span></span>`;
+      $('#controls').innerHTML = `
+        <span class="spacer"></span>
+        <button class="btn primary" id="done" ${moves.length ? '' : 'disabled'}>풀이 완료</button>`;
+      $('#side').innerHTML = `
         <div class="field"><label>수순 ${moves.length ? `(${moves.length}수)` : ''}</label>
           <div class="kifu">${moveChips(p, moves, moves.length) || '<div class="empty-k">바둑판을 눌러 첫 수를 두세요</div>'}</div>
           ${r.overwritten.length ? `<div class="notes">${r.overwritten.map((o) => `${o.num} = ${o.at}의 자리`).join(', ')}</div>` : ''}
-        </div>`;
-      $('#side').innerHTML = grading ? `
-          <div class="grading">
-            <div style="font-weight:700">직접 채점해 주세요</div>
-            <div class="grades">${Object.entries(GRADES).map(([k, g]) => `<button class="${k}${grade === k ? ' on' : ''}" data-g="${k}"><span class="ic">${g.ic}</span>${g.label}</button>`).join('')}</div>
-            <div class="field"><label>메모</label><textarea id="note" placeholder="예: 2의 젖힘이 급소였음">${esc(note)}</textarea></div>
-            <button class="btn primary block" id="saveAtt">풀이 저장</button>
-          </div>${kifu}`
-        : kifu;
-
-      if (grading) {
-        $('#back').onclick = () => { note = $('#note').value; grading = false; draw(); };
-        $app.querySelectorAll('.grades button').forEach((b) => b.onclick = () => {
-          grade = b.dataset.g;
-          $app.querySelectorAll('.grades button').forEach((x) => x.classList.toggle('on', x === b));
-        });
-        $('#saveAtt').onclick = () => {
-          const a = { id: uid(), moves: moves.slice(), grade, note: $('#note').value.trim(), createdAt: Date.now() };
-          (p.attempts = p.attempts || []).push(a);
-          p.updatedAt = Date.now();
-          save();
-          toast('풀이를 저장했어요');
-          location.hash = `#/p/${p.id}/answer/${a.id}`;
-        };
-      } else {
-        $('#stepBack').onclick = stepBack;
-        $('#done').onclick = () => { grading = true; draw(); };
-      }
+        </div>
+        <p class="hint">풀이 완료를 누르면 미채점으로 저장돼요. 채점은 목록의 ‘채점하기’에서 모아서 할 수 있어요.</p>`;
+      $('#stepBack').onclick = stepBack;
+      $('#done').onclick = finish;
     }
     draw();
     bindZoom(draw);
     $('#quit').onclick = (e) => { if (moves.length && !confirm('저장하지 않은 풀이가 사라져요. 나갈까요?')) e.preventDefault(); };
-    keyHandler = (e) => { if (!grading && e.key === 'ArrowLeft') stepBack(); };
+    keyHandler = (e) => { if (e.key === 'ArrowLeft') stepBack(); };
+  }
 
+  // ---------- 모아서 채점하기 ----------
+  function ungradedQueue() {
+    const q = [];
+    for (const p of problems) for (const a of p.attempts || []) if (!a.grade) q.push({ p, a });
+    return q.sort((x, y) => x.a.createdAt - y.a.createdAt); // 푼 순서대로
+  }
+
+  function viewGrade() {
+    const queue = ungradedQueue(); // 시작 시점 목록을 고정해서 이전으로 돌아가도 같은 순서
+    if (!queue.length) {
+      $app.innerHTML = `<div class="empty"><div class="big">채점할 풀이가 없어요</div>
+        <p>문제를 풀고 ‘풀이 완료’를 누르면 여기에 모여요.</p><a class="btn" href="#/">목록으로</a></div>`;
+      return;
+    }
+    let k = 0;
+
+    function summary() {
+      keyHandler = null;
+      const cnt = { correct: 0, wrong: 0, unsure: 0, none: 0 };
+      queue.forEach(({ a }) => { cnt[a.grade || 'none']++; });
+      $app.innerHTML = `<div class="empty"><div class="big">채점을 마쳤어요</div>
+        <p class="row" style="justify-content:center">${gradeBadge('correct')} ${cnt.correct} · ${gradeBadge('wrong')} ${cnt.wrong} · ${gradeBadge('unsure')} ${cnt.unsure}${cnt.none ? ` · ${gradeBadge(null)} ${cnt.none}` : ''}</p>
+        <div class="row" style="justify-content:center"><button class="btn" id="again">처음부터 다시 보기</button><a class="btn primary" href="#/">목록으로</a></div></div>`;
+      $('#again').onclick = () => { k = 0; show(); };
+    }
+
+    function show() {
+      const { p, a } = queue[k];
+      let step = a.moves.length;
+      $app.innerHTML = `
+        <div class="layout">
+          <section class="board-col">
+            <div class="board-head"><span class="label">채점 ${k + 1} / ${queue.length}</span>${zoomSeg()}</div>
+            <div id="board"></div>
+            <div class="stepper">
+              <button class="btn" id="s0">⏮</button>
+              <button class="btn" id="sPrev">◀</button>
+              <span class="pos" id="pos"></span>
+              <button class="btn" id="sNext">▶</button>
+              <button class="btn" id="sEnd">⏭</button>
+            </div>
+          </section>
+          <aside class="panel">
+            <div class="crumb"><a href="#/">← 목록</a></div>
+            <div class="progress"><span style="width:${((k + 1) / queue.length) * 100}%"></span></div>
+            <h1>${esc(p.title)}</h1>
+            <div class="meta">${stoneIcon(p.toPlay)} ${COLOR[p.toPlay]}선 · ${fmtDateTime(a.createdAt)} 풀이</div>
+            ${p.memo ? `<p class="memo">${esc(p.memo)}</p>` : ''}
+            <div class="field"><label>수순 (${a.moves.length}수)</label><div class="kifu" id="mvlist"></div><div class="notes" id="ow"></div></div>
+            <div class="field"><label>채점 <span class="hint">(1 정답 · 2 오답 · 3 보류, 누르면 다음으로)</span></label>
+              <div class="grades">${Object.entries(GRADES).map(([g, d]) => `<button class="${g}${a.grade === g ? ' on' : ''}" data-g="${g}"><span class="ic">${d.ic}</span>${d.label}</button>`).join('')}</div></div>
+            <div class="field"><label>메모</label><textarea id="note" placeholder="예: 2의 젖힘이 급소였음">${esc(a.note)}</textarea></div>
+            <div class="row">
+              <button class="btn" id="prevItem" ${k === 0 ? 'disabled' : ''}>← 이전 풀이</button>
+              <span style="flex:1"></span>
+              <button class="btn" id="nextItem">${k === queue.length - 1 ? '마치기' : '건너뛰기 →'}</button>
+            </div>
+          </aside>
+        </div>`;
+
+      function draw() {
+        const r = replay(p.size, p.stones, a.moves, step);
+        const vp = ui.fullBoard ? null : computeViewport(p.size, stoneIdxs(p).concat(moveIdxs(p, a.moves)));
+        $('#board').replaceChildren(renderBoard({ size: p.size, board: r.board, labels: r.labels, lastIdx: r.lastIdx, viewport: vp }));
+        $('#pos').textContent = `${step} / ${a.moves.length}`;
+        $('#mvlist').innerHTML = moveChips(p, a.moves, step);
+        $app.querySelectorAll('#mvlist .mv').forEach((el) => el.onclick = () => { step = +el.dataset.k; draw(); });
+        $('#ow').textContent = r.overwritten.map((o) => `${o.num} = ${o.at}의 자리`).join(', ');
+      }
+      draw();
+      bindZoom(draw);
+
+      const go = (s) => { step = Math.max(0, Math.min(a.moves.length, s)); draw(); };
+      const saveNote = () => {
+        const v = $('#note').value.trim();
+        if (v !== (a.note || '')) { a.note = v; p.updatedAt = Date.now(); save(); }
+      };
+      const move = (d) => {
+        saveNote();
+        if (k + d >= queue.length) return summary();
+        k = Math.max(0, k + d);
+        show();
+      };
+      const setGrade = (g) => {
+        a.note = $('#note').value.trim();
+        a.grade = g;
+        p.updatedAt = Date.now();
+        save();
+        $app.querySelectorAll('.grades button').forEach((x) => x.classList.toggle('on', x.dataset.g === g));
+        setTimeout(() => move(1), 250);
+      };
+      $('#s0').onclick = () => go(0);
+      $('#sPrev').onclick = () => go(step - 1);
+      $('#sNext').onclick = () => go(step + 1);
+      $('#sEnd').onclick = () => go(a.moves.length);
+      $('#prevItem').onclick = () => move(-1);
+      $('#nextItem').onclick = () => move(1);
+      $('#note').onchange = saveNote;
+      $app.querySelectorAll('.grades button').forEach((b) => b.onclick = () => setGrade(b.dataset.g));
+      keyHandler = (e) => {
+        if (e.key === 'ArrowLeft') go(step - 1);
+        else if (e.key === 'ArrowRight') go(step + 1);
+        else if (e.key === '1') setGrade('correct');
+        else if (e.key === '2') setGrade('wrong');
+        else if (e.key === '3') setGrade('unsure');
+      };
+    }
+    show();
   }
 
   // ---------- 문제 보기 / 이전 답 보기 ----------
@@ -415,18 +504,17 @@
     }
     let step = attempt ? attempt.moves.length : 0;
 
+    // 시험 삼아 두기: 내 풀이의 step 수 이후에 돌을 임시로 이어서 둬 봄 (저장하지 않음)
+    let vmoves = [];
+    const varActive = () => vmoves.length > 0;
+
     $app.innerHTML = `
       <div class="layout">
         <section class="board-col">
-          <div class="board-head"><span class="label">${attempt ? `#${attempts.indexOf(attempt) + 1} 풀이 보기` : '문제'}</span>${zoomSeg()}</div>
-          <div id="board"></div>${attempt ? `
-          <div class="stepper">
-            <button class="btn" id="s0">⏮</button>
-            <button class="btn" id="sPrev">◀</button>
-            <span class="pos" id="pos"></span>
-            <button class="btn" id="sNext">▶</button>
-            <button class="btn" id="sEnd">⏭</button>
-          </div>` : ''}</section>
+          <div class="board-head"><div id="status" class="status"></div>${zoomSeg()}</div>
+          <div id="board"></div>
+          ${attempt ? '<div id="under"></div>' : ''}
+        </section>
         <aside class="panel">
           <div class="crumb"><a href="#/">← 목록</a></div>
           <h1>${esc(p.title)}</h1>
@@ -473,23 +561,85 @@
         <div class="row"><span style="flex:1"></span><button class="btn danger" id="delAtt">이 풀이 삭제</button></div>`;
     }
 
+    function viewport(extra) {
+      if (ui.fullBoard) return null;
+      const base = stoneIdxs(p).concat(attempt ? moveIdxs(p, attempt.moves) : []);
+      const vp = computeViewport(p.size, base);
+      const out = extra.some((i) => { const x = i % p.size, y = (i / p.size) | 0; return x < vp.x0 || x > vp.x1 || y < vp.y0 || y > vp.y1; });
+      return out ? computeViewport(p.size, base.concat(extra)) : vp; // 임시로 둔 돌이 화면 밖으로 나갈 때만 넓힘
+    }
+
+    function nextVarColor() {
+      const last = vmoves.length ? vmoves[vmoves.length - 1] : attempt.moves[step - 1];
+      return last ? other(last.c) : (p.toPlay || 'B');
+    }
+
+    function addVarMove(i) {
+      const r = replay(p.size, p.stones, attempt.moves.slice(0, step).concat(vmoves));
+      const ko = r.boards.length >= 2 ? r.boards[r.boards.length - 2] : null;
+      const c = nextVarColor();
+      const res = tryPlay(r.board, p.size, i, c, ko);
+      if (res.error) { toast(ERR[res.error]); return; }
+      vmoves.push({ x: i % p.size, y: (i / p.size) | 0, c });
+      draw();
+    }
+    const varBack = () => { if (vmoves.length) { vmoves.pop(); draw(); } };
+    const varReset = () => { vmoves = []; draw(); };
+    const go = (s) => {
+      vmoves = []; // 수를 넘기면 임시로 둔 돌은 지움
+      step = Math.max(0, Math.min(attempt.moves.length, s));
+      draw();
+    };
+
+    // ← : 시험 삼아 둔 돌이 있으면 그걸 먼저 하나 빼고, 없으면 내 풀이를 한 수 뒤로
+    const backOne = () => (vmoves.length ? varBack() : go(step - 1));
+
+    function drawStatus() {
+      const nc = attempt ? nextVarColor() : (p.toPlay || 'B');
+      const n = attempt ? step + vmoves.length : 0;
+      $('#status').innerHTML = `
+        ${attempt ? `<button class="icon-btn" id="back" title="한 수 뒤로 (←)" aria-label="한 수 뒤로" ${n ? '' : 'disabled'}>←</button>` : ''}
+        <span class="turn-pill">${stoneIcon(nc)} ${COLOR[nc]} 차례 <span class="count">${n + 1}수째</span></span>
+        ${attempt && varActive() ? `<button class="btn" id="vReset" title="시험 삼아 둔 돌 지우기">원래대로</button>` : ''}`;
+      if (attempt) $('#back').onclick = backOne;
+      if (attempt && varActive()) $('#vReset').onclick = varReset;
+    }
+
+    function drawUnder() {
+      $('#under').innerHTML = `
+        <div class="stepper">
+          <button class="btn" id="s0">⏮</button>
+          <button class="btn" id="sPrev">◀</button>
+          <span class="pos">${step} / ${attempt.moves.length}</span>
+          <button class="btn" id="sNext">▶</button>
+          <button class="btn" id="sEnd">⏭</button>
+        </div>`;
+      $('#s0').onclick = () => go(0);
+      $('#sPrev').onclick = () => go(step - 1);
+      $('#sNext').onclick = () => go(step + 1);
+      $('#sEnd').onclick = () => go(attempt.moves.length);
+    }
+
     function draw() {
-      let board, labels, lastIdx = -1;
-      if (attempt) {
-        const r = replay(p.size, p.stones, attempt.moves, step);
-        board = r.board; labels = r.labels; lastIdx = r.lastIdx;
-        $('#pos').textContent = `${step} / ${attempt.moves.length}`;
-        $('#mvlist').innerHTML = moveChips(p, attempt.moves, step);
-        $app.querySelectorAll('#mvlist .mv').forEach((el) => el.onclick = () => { step = +el.dataset.k; draw(); });
-        $('#ow').textContent = r.overwritten.map((o) => `${o.num} = ${o.at}의 자리`).join(', ');
-      } else {
-        board = boardFromStones(p.size, p.stones);
+      if (!attempt) {
+        drawStatus();
+        $('#board').replaceChildren(renderBoard({ size: p.size, board: boardFromStones(p.size, p.stones), viewport: viewport([]) }));
+        return;
       }
-      const vp = ui.fullBoard ? null : computeViewport(p.size, stoneIdxs(p).concat(attempt ? moveIdxs(p, attempt.moves) : []));
-      $('#board').replaceChildren(renderBoard({ size: p.size, board, labels, lastIdx, viewport: vp }));
+      const seq = attempt.moves.slice(0, step).concat(vmoves);
+      const r = replay(p.size, p.stones, seq);
+      drawStatus();
+      $('#board').replaceChildren(renderBoard({
+        size: p.size, board: r.board, labels: r.labels, lastIdx: r.lastIdx, varFrom: step,
+        viewport: viewport(moveIdxs(p, vmoves)),
+        onClick: addVarMove, ghostColor: nextVarColor,
+      }));
+      $('#mvlist').innerHTML = moveChips(p, attempt.moves, step);
+      $app.querySelectorAll('#mvlist .mv').forEach((el) => el.onclick = () => go(+el.dataset.k));
+      $('#ow').textContent = r.overwritten.map((o) => `${o.num} = ${o.at}의 자리`).join(', ');
+      drawUnder();
     }
     draw();
-
     bindZoom(draw);
 
     if (!attempt) {
@@ -502,13 +652,8 @@
       return;
     }
 
-    const go = (s) => { step = Math.max(0, Math.min(attempt.moves.length, s)); draw(); };
-    $('#s0').onclick = () => go(0);
-    $('#sPrev').onclick = () => go(step - 1);
-    $('#sNext').onclick = () => go(step + 1);
-    $('#sEnd').onclick = () => go(attempt.moves.length);
     keyHandler = (e) => {
-      if (e.key === 'ArrowLeft') go(step - 1);
+      if (e.key === 'ArrowLeft') backOne();
       else if (e.key === 'ArrowRight') go(step + 1);
       else if (e.key === 'Home') go(0);
       else if (e.key === 'End') go(attempt.moves.length);
@@ -517,14 +662,21 @@
       attempt.grade = attempt.grade === b.dataset.g ? null : b.dataset.g;
       p.updatedAt = Date.now();
       save();
-      viewDetail(p, attempt.id);
+      // 시험 삼아 둔 돌이 있을 수 있으니 화면 전체를 다시 그리지 않고 표시만 갱신
+      $app.querySelectorAll('.grades button').forEach((x) => x.classList.toggle('on', x.dataset.g === attempt.grade));
+      const badge = $app.querySelector('.att.on .badge');
+      if (badge) badge.outerHTML = gradeBadge(attempt.grade);
     });
     $('#note').onchange = (e) => { attempt.note = e.target.value.trim(); save(); toast('메모를 저장했어요'); };
     $('#delAtt').onclick = () => {
       if (!confirm('이 풀이 기록을 삭제할까요?')) return;
       p.attempts = attempts.filter((a) => a !== attempt);
       save();
-      location.hash = p.attempts.length ? `#/p/${p.id}/answer/latest` : `#/p/${p.id}`;
+      toast('풀이 기록을 삭제했어요');
+      // 같은 주소(answer/latest)면 hashchange가 안 생기므로 주소를 바꾸고 직접 다시 그림.
+      // replaceState라 뒤로가기로 지운 풀이 주소에 돌아가지 않음.
+      history.replaceState(null, '', p.attempts.length ? `#/p/${p.id}/answer/latest` : `#/p/${p.id}`);
+      route();
     };
   }
 
