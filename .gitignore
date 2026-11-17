@@ -1,2 +1,6 @@
 .DS_Store
 *.tmp
+
+# 풀이 기록은 로컬에만 보관 (빈 폴더만 레포에 포함)
+data/problems/*
+!data/problems/.gitkeep
