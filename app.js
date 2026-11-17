@@ -17,12 +17,55 @@
   const COLOR = { B: '흑', W: '백' };
 
   // ---------- storage ----------
-  function load() {
+  // 서버(node server.js)로 열면 레포의 data/problems/<id>.json 에 저장,
+  // index.html 을 파일로 바로 열면 브라우저 localStorage 에 저장.
+  let mode = 'local';
+  const snap = new Map(); // 서버에 마지막으로 저장된 내용 (id -> JSON 문자열)
+  let queue = Promise.resolve();
+
+  function loadLocal() {
     try { return JSON.parse(localStorage.getItem(STORE_KEY)) || []; } catch { return []; }
   }
+  async function load() {
+    if (location.protocol.startsWith('http')) {
+      try {
+        const r = await fetch('api/problems', { cache: 'no-store' });
+        if (r.ok) {
+          const arr = await r.json();
+          mode = 'server';
+          arr.forEach((p) => snap.set(p.id, JSON.stringify(p)));
+          return arr;
+        }
+      } catch {}
+    }
+    mode = 'local';
+    return loadLocal();
+  }
+  function request(method, id, body) {
+    queue = queue.then(async () => {
+      const r = await fetch('api/problems/' + encodeURIComponent(id), {
+        method, headers: { 'Content-Type': 'application/json' }, body,
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+    }).catch((e) => {
+      if (method === 'PUT') snap.delete(id); // 다음 저장 때 다시 시도
+      toast('파일 저장 실패: ' + e.message + ' (서버가 켜져 있는지 확인하세요)');
+    });
+  }
+  // 바뀐 문제만 파일로 저장하고, 지워진 문제는 파일도 삭제
   function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(problems)); }
-    catch (e) { toast('저장 실패: ' + e.message); }
+    if (mode === 'local') {
+      try { localStorage.setItem(STORE_KEY, JSON.stringify(problems)); }
+      catch (e) { toast('저장 실패: ' + e.message); }
+      return;
+    }
+    const ids = new Set();
+    for (const p of problems) {
+      ids.add(p.id);
+      const j = JSON.stringify(p);
+      if (snap.get(p.id) !== j) { snap.set(p.id, j); request('PUT', p.id, j); }
+    }
+    for (const id of [...snap.keys()]) if (!ids.has(id)) { snap.delete(id); request('DELETE', id); }
   }
   function loadUI() {
     try { return Object.assign({ fullBoard: false, filter: 'all' }, JSON.parse(localStorage.getItem(UI_KEY))); }
@@ -30,7 +73,7 @@
   }
   function saveUI() { try { localStorage.setItem(UI_KEY, JSON.stringify(ui)); } catch {} }
 
-  let problems = load();
+  let problems = [];
   const ui = loadUI();
 
   // ---------- helpers ----------
@@ -124,6 +167,7 @@
         <span class="spacer"></span>
         <button class="btn" id="exp">내보내기</button>
         <button class="btn" id="imp">불러오기</button>
+        ${migratable().length ? `<button class="btn primary" id="mig">브라우저 기록 ${migratable().length}개를 레포로 옮기기</button>` : ''}
       </div>
       <div class="chips">${filters.map(([k, l]) => `<button class="chip${ui.filter === k ? ' on' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
       ${problems.length === 0
@@ -151,6 +195,7 @@
       $app.querySelectorAll('.card').forEach((c) => { c.style.display = !q || c.dataset.text.includes(q) ? '' : 'none'; });
     };
     $('#exp').onclick = exportJSON;
+    if ($('#mig')) $('#mig').onclick = migrate;
     $('#imp').onclick = () => document.getElementById('importFile').click();
   }
 
@@ -481,6 +526,25 @@
     };
   }
 
+  // ---------- 브라우저(localStorage) 기록 → 레포 파일로 옮기기 ----------
+  function migratable() {
+    if (mode !== 'server') return [];
+    const have = new Set(problems.map((p) => p.id));
+    return loadLocal().filter((p) => p && p.id && !have.has(p.id));
+  }
+  async function migrate() {
+    const items = migratable();
+    if (!items.length || !confirm(`브라우저에 저장된 문제 ${items.length}개를 레포의 data/problems/ 로 옮길까요?`)) return;
+    problems.push(...items);
+    save();
+    await queue;
+    if (items.every((p) => snap.has(p.id))) {
+      localStorage.removeItem(STORE_KEY);
+      toast(`${items.length}개를 레포로 옮겼어요`);
+    }
+    route();
+  }
+
   // ---------- 백업 내보내기 / 불러오기 ----------
   function exportJSON() {
     const data = JSON.stringify({ app: 'saha-note', version: 1, exportedAt: Date.now(), problems }, null, 2);
@@ -516,5 +580,12 @@
     }
   });
 
-  route();
+  load().then((arr) => {
+    problems = arr;
+    const tag = document.getElementById('storeMode');
+    tag.textContent = mode === 'server' ? '레포에 저장 · data/problems' : '브라우저에 저장';
+    tag.title = mode === 'server' ? '기록이 레포의 data/problems/ 폴더에 파일로 저장돼요' : 'npm start 로 서버를 켜고 열면 레포 안에 파일로 저장돼요';
+    tag.classList.add(mode);
+    route();
+  });
 })();

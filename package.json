@@ -1,0 +1,9 @@
+{
+  "name": "go-life",
+  "version": "1.0.0",
+  "private": true,
+  "description": "바둑 사활 문제 입력·풀이·채점 노트",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
