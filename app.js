@@ -158,7 +158,9 @@
         default: return true;
       }
     };
-    const list = [...problems].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)).filter(match);
+    // 이름 내림차순. numeric 비교로 '9번' < '10번' 처럼 숫자를 자연스럽게 정렬
+    const byTitleDesc = (a, b) => String(b.title || '').localeCompare(String(a.title || ''), 'ko', { numeric: true });
+    const list = [...problems].sort(byTitleDesc).filter(match);
 
     $app.innerHTML = `
       <div class="toolbar">
